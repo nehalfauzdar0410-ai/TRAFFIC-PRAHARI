@@ -1,0 +1,433 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Reusable Hardened Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 160 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidPlate(plate) {
+      return plate is string && plate.size() >= 4 && plate.size() <= 20 && plate.matches('^[A-Z0-9\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == '2000014064@karnavatiuniversity.edu.in'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin()
+        || (isSignedIn()
+          && exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true);
+    }
+
+    // --- Entity Validation Blueprints ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'fullName', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'role', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100
+        && data.role in ['citizen', 'admin']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'fullName', 'email', 'mobileNumber', 'primaryVehicleReg', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'email', 'mobileNumber', 'primaryVehicleReg', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.mobileNumber is string && data.mobileNumber.size() <= 20
+        && data.primaryVehicleReg is string && data.primaryVehicleReg.size() <= 20
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRegisteredVehicle(data) {
+      return data.keys().hasAll(['id', 'userId', 'registrationNumber', 'vehicleType', 'label', 'ownershipVerified', 'verificationMethod', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'registrationNumber', 'vehicleType', 'label', 'ownershipVerified', 'verificationMethod', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && isValidPlate(data.registrationNumber)
+        && data.vehicleType in ['Two-Wheeler', 'Four-Wheeler', 'Commercial', 'Heavy Vehicle', 'Other']
+        && data.label is string && data.label.size() <= 60
+        && data.ownershipVerified is bool
+        && data.verificationMethod is string && data.verificationMethod.size() >= 2 && data.verificationMethod.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidViolationType(v) {
+      return v in [
+        'Driving without helmet',
+        'Driving without seatbelt',
+        'Signal jumping',
+        'Wrong-side driving',
+        'Illegal parking',
+        'Over-speeding',
+        'Using a mobile phone while driving',
+        'Triple riding',
+        'Other violations'
+      ];
+    }
+
+    function isValidReportStatus(s) {
+      return s in ['Submitted', 'Under Review', 'Verified', 'Action Taken', 'Resolved', 'Rejected'];
+    }
+
+    function isValidTrafficReport(data) {
+      return data.keys().hasAll([
+          'id', 'complaintCode', 'reporterId', 'violationType', 'incidentDate', 'incidentTime',
+          'locationText', 'latitude', 'longitude', 'vehicleRegNumber', 'ocrExtractedPlate',
+          'ocrConfidence', 'ocrConfirmed', 'description', 'status', 'adminRemarks',
+          'evidenceCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'complaintCode', 'reporterId', 'violationType', 'incidentDate', 'incidentTime',
+          'locationText', 'latitude', 'longitude', 'vehicleRegNumber', 'ocrExtractedPlate',
+          'ocrConfidence', 'ocrConfirmed', 'description', 'status', 'adminRemarks',
+          'evidenceCount', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.complaintCode is string && data.complaintCode.size() >= 6 && data.complaintCode.size() <= 32 && data.complaintCode.matches('^TP-[0-9]{4}-[A-Z0-9]+$')
+        && isValidId(data.reporterId)
+        && isValidViolationType(data.violationType)
+        && data.incidentDate is string && data.incidentDate.size() >= 8 && data.incidentDate.size() <= 20
+        && data.incidentTime is string && data.incidentTime.size() >= 4 && data.incidentTime.size() <= 20
+        && data.locationText is string && data.locationText.size() >= 3 && data.locationText.size() <= 300
+        && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
+        && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
+        && data.vehicleRegNumber is string && data.vehicleRegNumber.size() <= 20
+        && data.ocrExtractedPlate is string && data.ocrExtractedPlate.size() <= 20
+        && data.ocrConfidence in ['high', 'medium', 'low', 'unreadable', 'manual', 'none']
+        && data.ocrConfirmed is bool
+        && data.description is string && data.description.size() <= 2000
+        && isValidReportStatus(data.status)
+        && data.adminRemarks is string && data.adminRemarks.size() <= 1000
+        && data.evidenceCount is int && data.evidenceCount >= 0 && data.evidenceCount <= 10
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidReportEvidence(data) {
+      return data.keys().hasAll(['id', 'reportId', 'reporterId', 'fileName', 'mimeType', 'fileSize', 'evidenceUrl', 'createdAt'])
+        && data.keys().hasOnly(['id', 'reportId', 'reporterId', 'fileName', 'mimeType', 'fileSize', 'evidenceUrl', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.reportId)
+        && isValidId(data.reporterId)
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200
+        && data.mimeType in ['image/jpeg', 'image/png', 'image/webp']
+        && data.fileSize is int && data.fileSize > 0 && data.fileSize <= 5242880
+        && data.evidenceUrl is string && data.evidenceUrl.size() >= 1 && data.evidenceUrl.size() <= 500
+        && data.createdAt is timestamp;
+    }
+
+    function isValidStatusHistory(data) {
+      return data.keys().hasAll(['id', 'reportId', 'reporterId', 'status', 'remarks', 'actorId', 'actorRole', 'createdAt'])
+        && data.keys().hasOnly(['id', 'reportId', 'reporterId', 'status', 'remarks', 'actorId', 'actorRole', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.reportId)
+        && isValidId(data.reporterId)
+        && isValidReportStatus(data.status)
+        && data.remarks is string && data.remarks.size() <= 1000
+        && isValidId(data.actorId)
+        && data.actorRole in ['citizen', 'admin']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidChallanRecord(data) {
+      return data.keys().hasAll([
+          'id', 'challanNumber', 'vehicleOwnerId', 'vehicleRegNumber', 'violationCategory',
+          'incidentDate', 'locationText', 'amountInr', 'paymentStatus', 'sourceName',
+          'isDemonstration', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'challanNumber', 'vehicleOwnerId', 'vehicleRegNumber', 'violationCategory',
+          'incidentDate', 'locationText', 'amountInr', 'paymentStatus', 'sourceName',
+          'isDemonstration', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && data.challanNumber is string && data.challanNumber.size() >= 4 && data.challanNumber.size() <= 40
+        && isValidId(data.vehicleOwnerId)
+        && isValidPlate(data.vehicleRegNumber)
+        && data.violationCategory is string && data.violationCategory.size() >= 2 && data.violationCategory.size() <= 120
+        && data.incidentDate is string && data.incidentDate.size() >= 8 && data.incidentDate.size() <= 30
+        && data.locationText is string && data.locationText.size() >= 2 && data.locationText.size() <= 240
+        && data.amountInr is number && data.amountInr >= 0 && data.amountInr <= 500000
+        && data.paymentStatus in ['Pending', 'Paid', 'Disputed']
+        && data.sourceName is string && data.sourceName.size() >= 2 && data.sourceName.size() <= 160
+        && data.isDemonstration is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'badgeId', 'active', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'badgeId', 'active', 'createdAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 100
+        && data.badgeId is string && data.badgeId.size() >= 2 && data.badgeId.size() <= 40
+        && data.active is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminActivityLog(data) {
+      return data.keys().hasAll([
+          'id', 'adminUid', 'adminEmail', 'actionType', 'targetReportId',
+          'targetComplaintCode', 'previousStatus', 'newStatus', 'remarks', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'adminUid', 'adminEmail', 'actionType', 'targetReportId',
+          'targetComplaintCode', 'previousStatus', 'newStatus', 'remarks', 'createdAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.adminUid)
+        && data.adminEmail is string && data.adminEmail.size() >= 3 && data.adminEmail.size() <= 160
+        && data.actionType is string && data.actionType.size() >= 2 && data.actionType.size() <= 60
+        && data.targetReportId is string && data.targetReportId.size() >= 1 && data.targetReportId.size() <= 128
+        && data.targetComplaintCode is string && data.targetComplaintCode.size() >= 2 && data.targetComplaintCode.size() <= 40
+        && data.previousStatus is string && data.previousStatus.size() <= 40
+        && data.newStatus is string && data.newStatus.size() <= 40
+        && data.remarks is string && data.remarks.size() <= 1000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidVehicleReportSummary(data) {
+      return data.keys().hasAll(['plateNumber', 'totalReports', 'summaries', 'updatedAt'])
+        && data.keys().hasOnly(['plateNumber', 'totalReports', 'summaries', 'updatedAt'])
+        && isValidPlate(data.plateNumber)
+        && data.totalReports is int && data.totalReports >= 0 && data.totalReports <= 1000
+        && data.summaries is list && data.summaries.size() <= 50
+        && (data.summaries.size() == 0 || data.summaries[0] is map)
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUser(incoming())
+        && incoming().uid == request.auth.uid
+        && (incoming().role == 'citizen' || (incoming().role == 'admin' && isBootstrappedAdmin()))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'updatedAt']))
+          || isBootstrappedAdmin()
+        );
+      allow delete: if false;
+    }
+
+    match /userProfiles/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isOwner(userId)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'mobileNumber', 'primaryVehicleReg', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /registeredVehicles/{vehicleId} {
+      allow get: if isValidId(vehicleId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(vehicleId)
+        && isSignedIn()
+        && isValidRegisteredVehicle(incoming())
+        && incoming().id == vehicleId
+        && incoming().userId == request.auth.uid
+        && vehicleId == (request.auth.uid + '_' + incoming().registrationNumber)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(vehicleId)
+        && isSignedIn()
+        && isValidRegisteredVehicle(incoming())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().registrationNumber == existing().registrationNumber
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().userId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['label', 'vehicleType', 'ownershipVerified', 'verificationMethod', 'updatedAt']))
+          || isAdmin()
+        );
+      allow delete: if isValidId(vehicleId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+    }
+
+    match /trafficReports/{reportId} {
+      allow get: if isValidId(reportId) && (isAdmin() || (isSignedIn() && existing().reporterId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);
+      allow create: if isValidId(reportId)
+        && isSignedIn()
+        && isValidTrafficReport(incoming())
+        && incoming().id == reportId
+        && incoming().reporterId == request.auth.uid
+        && incoming().status == 'Submitted'
+        && incoming().adminRemarks == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(reportId)
+        && isAdmin()
+        && isValidTrafficReport(incoming())
+        && incoming().id == existing().id
+        && incoming().reporterId == existing().reporterId
+        && incoming().complaintCode == existing().complaintCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminRemarks', 'updatedAt']);
+      allow delete: if false;
+
+      match /evidence/{evidenceId} {
+        allow get: if isValidId(reportId) && isValidId(evidenceId) && (
+          isAdmin()
+          || (isSignedIn()
+            && get(/databases/$(database)/documents/trafficReports/$(reportId)).data.reporterId == request.auth.uid)
+        );
+        allow list: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);
+        allow create: if isValidId(reportId)
+          && isValidId(evidenceId)
+          && isSignedIn()
+          && isValidReportEvidence(incoming())
+          && incoming().id == evidenceId
+          && incoming().reportId == reportId
+          && incoming().reporterId == request.auth.uid
+          && exists(/databases/$(database)/documents/trafficReports/$(reportId))
+          && get(/databases/$(database)/documents/trafficReports/$(reportId)).data.reporterId == request.auth.uid
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /statusHistory/{historyId} {
+        allow get: if isValidId(reportId) && isValidId(historyId) && (
+          isAdmin()
+          || (isSignedIn()
+            && get(/databases/$(database)/documents/trafficReports/$(reportId)).data.reporterId == request.auth.uid)
+        );
+        allow list: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);
+        allow create: if isValidId(reportId)
+          && isValidId(historyId)
+          && isSignedIn()
+          && isValidStatusHistory(incoming())
+          && incoming().id == historyId
+          && incoming().reportId == reportId
+          && exists(/databases/$(database)/documents/trafficReports/$(reportId))
+          && incoming().createdAt == request.time
+          && (
+            (incoming().actorRole == 'citizen'
+              && incoming().actorId == request.auth.uid
+              && incoming().reporterId == request.auth.uid
+              && incoming().status == 'Submitted'
+              && get(/databases/$(database)/documents/trafficReports/$(reportId)).data.reporterId == request.auth.uid)
+            || (isAdmin()
+              && incoming().actorRole == 'admin'
+              && incoming().actorId == request.auth.uid
+              && incoming().reporterId == get(/databases/$(database)/documents/trafficReports/$(reportId)).data.reporterId)
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    match /challanRecords/{challanId} {
+      allow get: if isValidId(challanId) && (isAdmin() || (isSignedIn() && existing().vehicleOwnerId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.vehicleOwnerId == request.auth.uid);
+      allow create: if isValidId(challanId)
+        && isSignedIn()
+        && isValidChallanRecord(incoming())
+        && incoming().id == challanId
+        && incoming().createdAt == request.time
+        && (
+          isAdmin()
+          || (incoming().vehicleOwnerId == request.auth.uid && incoming().isDemonstration == true)
+        );
+      allow update: if isValidId(challanId)
+        && isAdmin()
+        && isValidChallanRecord(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus']);
+      allow delete: if isValidId(challanId) && isAdmin();
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isValidId(adminUid)
+        && isBootstrappedAdmin()
+        && isValidAdminUser(incoming())
+        && incoming().uid == adminUid
+        && incoming().createdAt == request.time;
+      allow delete: if false;
+    }
+
+    match /adminActivityLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(logId)
+        && isAdmin()
+        && isValidAdminActivityLog(incoming())
+        && incoming().id == logId
+        && incoming().adminUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /vehicleReportSummaries/{plateNumber} {
+      allow get: if isValidPlate(plateNumber) && (
+        isAdmin()
+        || (isSignedIn()
+          && exists(/databases/$(database)/documents/registeredVehicles/$(request.auth.uid + '_' + plateNumber))
+          && get(/databases/$(database)/documents/registeredVehicles/$(request.auth.uid + '_' + plateNumber)).data.ownershipVerified == true)
+      );
+      allow list: if isAdmin();
+      allow create, update: if isValidPlate(plateNumber)
+        && isAdmin()
+        && isValidVehicleReportSummary(incoming())
+        && incoming().plateNumber == plateNumber
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+  }
+}

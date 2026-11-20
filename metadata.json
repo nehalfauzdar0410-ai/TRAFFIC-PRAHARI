@@ -1,0 +1,6 @@
+{
+  "name": "TAFFIC-PRAHARI",
+  "description": "TAFFIC-PRAHARI — Citizen Traffic Violation Reporting and Management Portal. Report Responsibly. Make Roads Safer.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
